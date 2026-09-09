@@ -342,23 +342,40 @@ function initPaddle(){
   paddle.w = Math.max(90, W*0.14);
   paddle.h = Math.max(10, H*0.014);
   paddleYBase = H*0.925;
+  paddleYMin = H*0.58;   // how far up the paddle can roam — well clear of the bricks
+  paddleYMax = H*0.94;   // resting height near the bottom
   paddle.y = paddleYBase;
   paddle.x = W/2 - paddle.w/2;
   paddle.targetX = paddle.x;
 }
 function clampPaddle(){
   paddleYBase = H*0.925;
-  paddle.y = paddleYBase;
+  paddleYMin = H*0.58;
+  paddleYMax = H*0.94;
+  paddle.y = Math.max(paddleYMin, Math.min(paddleYMax, paddle.y || paddleYBase));
   paddle.x = Math.max(0, Math.min(W-paddle.w, paddle.x));
   paddle.targetX = Math.max(0, Math.min(W-paddle.w, paddle.targetX));
 }
 
 let paddleWideTimer = 0;
+let boundaryFlashTop = 0, boundaryFlashBottom = 0;
+
+function checkVerticalBounds(){
+  if(paddle.y <= paddleYMin){
+    paddle.y = paddleYMin;
+    if(!atTopBound){ atTopBound = true; buzz(6); boundaryFlashTop = 0.3; }
+  } else atTopBound = false;
+  if(paddle.y >= paddleYMax){
+    paddle.y = paddleYMax;
+    if(!atBottomBound){ atBottomBound = true; buzz(6); boundaryFlashBottom = 0.3; }
+  } else atBottomBound = false;
+}
 let PADDLE_BASE_W_RATIO = 0.14;
 
-// keyboard: left/right slide the paddle (desktop only — no vertical movement, one simple axis)
-const keys = { left:false, right:false };
-let paddleYBase = 0;
+// keyboard: all 4 arrows move the paddle; touch/mouse drag moves it freely too
+const keys = { left:false, right:false, up:false, down:false };
+let paddleYBase = 0, paddleYMin = 0, paddleYMax = 0;
+let atTopBound = false, atBottomBound = false; // edge-triggered feedback when the paddle reaches its lane limits
 
 /* ======================= BALLS ======================= */
 function makeBall(x,y,vx,vy){ return {x,y,vx,vy,r:0, fire:false}; }
@@ -502,11 +519,16 @@ function pointerX(e){
   const cx = (e.touches ? e.touches[0].clientX : e.clientX);
   return cx - rect.left;
 }
+function pointerY(e){
+  const rect = canvas.getBoundingClientRect();
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return cy - rect.top;
+}
 let dragging = false;
 
 function onDown(e){
   ensureAudio();
-  const x = pointerX(e);
+  const x = pointerX(e), y = pointerY(e);
   if(state === STATE.START){ startGame(); return; }
   if(state === STATE.PAUSE){ togglePause(); return; }
   if(state === STATE.OVER){ startGame(); return; }
@@ -514,6 +536,8 @@ function onDown(e){
   const nx = Math.max(0, Math.min(W-paddle.w, x - paddle.w/2));
   paddle.targetX = nx;
   paddle.x = nx; // instant tracking on touch/click — no glide lag under your finger
+  paddle.y = Math.max(paddleYMin, Math.min(paddleYMax, y - paddle.h/2));
+  checkVerticalBounds();
   if(state === STATE.AIM){ launchBalls(); }
 }
 function onMove(e){
@@ -521,7 +545,12 @@ function onMove(e){
   const x = pointerX(e);
   const nx = Math.max(0, Math.min(W-paddle.w, x - paddle.w/2));
   paddle.targetX = nx;
-  if(dragging) paddle.x = nx; // instant while actively dragging
+  if(dragging){
+    paddle.x = nx; // instant while actively dragging
+    const y = pointerY(e);
+    paddle.y = Math.max(paddleYMin, Math.min(paddleYMax, y - paddle.h/2));
+    checkVerticalBounds();
+  }
 }
 function onUp(){ dragging = false; }
 
@@ -543,10 +572,14 @@ window.addEventListener('keydown', (e)=>{
   }
   if(e.key==='ArrowLeft'){ e.preventDefault(); keys.left = true; }
   if(e.key==='ArrowRight'){ e.preventDefault(); keys.right = true; }
+  if(e.key==='ArrowUp'){ e.preventDefault(); keys.up = true; }
+  if(e.key==='ArrowDown'){ e.preventDefault(); keys.down = true; }
 });
 window.addEventListener('keyup', (e)=>{
   if(e.key==='ArrowLeft') keys.left = false;
   if(e.key==='ArrowRight') keys.right = false;
+  if(e.key==='ArrowUp') keys.up = false;
+  if(e.key==='ArrowDown') keys.down = false;
 });
 
 document.getElementById('soundBtn').addEventListener('click', (e)=>{
@@ -688,11 +721,14 @@ function checkBrickCollisions(ball){
 /* ======================= UPDATE ======================= */
 let lastT = performance.now();
 function update(dt){
-  // keyboard: left/right slide the paddle (desktop only)
+  // keyboard: left/right slide, up/down roam within the paddle's lane
   const keySpeed = W*0.9;
   if(keys.left){ paddle.targetX -= keySpeed*dt; }
   if(keys.right){ paddle.targetX += keySpeed*dt; }
   paddle.targetX = Math.max(0, Math.min(W-paddle.w, paddle.targetX));
+  if(keys.up){ paddle.y -= H*0.75*dt; }
+  if(keys.down){ paddle.y += H*0.75*dt; }
+  checkVerticalBounds();
 
   // paddle glide toward target (keyboard only — touch/mouse drag sets paddle.x directly, see onDown/onMove)
   const wTarget = paddle.targetX;
@@ -717,6 +753,8 @@ function update(dt){
     comboPopTimer -= dt;
     if(comboPopTimer<=0) comboEl.classList.remove('show');
   }
+  if(boundaryFlashTop>0) boundaryFlashTop -= dt;
+  if(boundaryFlashBottom>0) boundaryFlashBottom -= dt;
 
   if(state === STATE.AIM){
     const b = balls[0];
@@ -870,6 +908,34 @@ function draw(){
     ctx.fillText(p.type.k, p.x, p.y+1);
     ctx.restore();
   });
+
+  // paddle roam lane — a faint guide so the vertical range reads as intentional space,
+  // not an invisible wall, plus a soft flash the instant a limit is reached
+  ctx.save();
+  ctx.strokeStyle = 'rgba(57,255,140,0.16)';
+  ctx.setLineDash([4,7]);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(paddle.x+paddle.w/2, paddleYMin+paddle.h/2);
+  ctx.lineTo(paddle.x+paddle.w/2, paddleYMax+paddle.h/2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  if(boundaryFlashTop>0){
+    ctx.save();
+    ctx.globalAlpha = Math.max(boundaryFlashTop/0.3,0)*0.5;
+    ctx.strokeStyle = '#39ff8c'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,paddleYMin); ctx.lineTo(W,paddleYMin); ctx.stroke();
+    ctx.restore();
+  }
+  if(boundaryFlashBottom>0){
+    ctx.save();
+    ctx.globalAlpha = Math.max(boundaryFlashBottom/0.3,0)*0.5;
+    ctx.strokeStyle = '#39ff8c'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,paddleYMax+paddle.h); ctx.lineTo(W,paddleYMax+paddle.h); ctx.stroke();
+    ctx.restore();
+  }
 
   // paddle
   ctx.save();
