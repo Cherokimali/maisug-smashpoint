@@ -8,11 +8,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#05050a">
 <meta name="format-detection" content="telephone=no">
-<title>MAISUG SMASHPOINT</title> <meta property="og:title" content="MAISUG SMASHPOINT"> 
-<meta property="og:description" content="A neon arcade breaker game by RetroGames, powered by PRD."> 
-<meta property="og:image" content="https://cherokimali.github.io/maisug-smashpoint/retrogames_cute_1200x630.png"> 
-<meta property="og:url" content="https://cherokimali.github.io/maisug-smashpoint/"> 
-<meta property="og:type" content="website"> <meta name="twitter:card" content="summary_large_image">
+<title>MAISUG SMASHPOINT</title>
+<meta property="og:title" content="MAISUG SMASHPOINT">
+<meta property="og:description" content="A neon arcade breaker game by RetroGames, powered by PRD.">
+<meta property="og:image" content="https://cherokimali.github.io/maisug-smashpoint/retrogames_cute_1200x630.png">
+<meta property="og:url" content="https://cherokimali.github.io/maisug-smashpoint/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   :root{
     --green:#39ff8c;
@@ -202,9 +204,18 @@ function resize(){
   canvas.width = Math.round(W * DPR);
   canvas.height = Math.round(H * DPR);
   ctx.setTransform(DPR,0,0,DPR,0,0);
+  applyResponsiveDifficulty();
   buildStarfield();
   layoutBricks();
   clampPaddle();
+}
+
+// Phones (narrow / portrait viewports) get fewer, bigger bricks and a wider paddle
+// so the game reads clearly and feels forgiving on a small touch screen.
+function applyResponsiveDifficulty(){
+  const narrow = W < 700 || W < H;
+  cols = narrow ? 7 : 11;
+  PADDLE_BASE_W_RATIO = narrow ? 0.24 : 0.14;
 }
 
 /* ======================= AUDIO (synthesized, cute chiptune) ======================= */
@@ -255,6 +266,11 @@ const SCALE = [261.63,293.66,329.63,392.00,440.00, 523.25,587.33,659.25,783.99,8
 // gentle A minor pentatonic for "sad" cues, still musical rather than harsh
 const SCALE_MINOR = [220.00,261.63,293.66,329.63,392.00, 220.00*2,261.63*2];
 
+// short vibration pulse on phones with the Vibration API; silently no-ops elsewhere (desktop, iOS Safari)
+function buzz(ms=10){
+  if(navigator.vibrate) navigator.vibrate(ms);
+}
+
 const sfx = {
   wall(){ note({freq:349.23, dur:0.09, type:'sine', vol:0.22, harmony:2, harmonyVol:0.2}); },
   paddle(){ note({freq:440.00, dur:0.11, type:'triangle', vol:0.32, harmony:1.5, harmonyVol:0.25}); },
@@ -289,7 +305,8 @@ const sfx = {
 const STATE = { START:'start', AIM:'aim', PLAY:'play', PAUSE:'pause', LEVEL:'level', OVER:'over' };
 let state = STATE.START;
 
-let score = 0, lives = 3, level = 1;
+const MAX_LIVES = 4;
+let score = 0, lives = MAX_LIVES, level = 1;
 let combo = 0, comboTimer = 0;
 const COMBO_WINDOW = 1.1; // seconds to keep combo alive
 
@@ -369,7 +386,7 @@ function clampPaddle(){
 }
 
 let paddleWideTimer = 0;
-const PADDLE_BASE_W_RATIO = 0.14;
+let PADDLE_BASE_W_RATIO = 0.14;
 
 // keyboard movement: left/right slide the paddle, up/down roam it within a limited band
 const keys = { left:false, right:false, up:false, down:false };
@@ -381,7 +398,7 @@ let balls = [];
 let ballRadius = 0;
 let baseSpeed = 0;
 
-function initBallRadius(){ ballRadius = Math.max(6, Math.min(10, W*0.009)); }
+function initBallRadius(){ ballRadius = Math.max(6, Math.min(11, Math.min(W,H)*0.014)); }
 
 function resetBallsOnPaddle(){
   balls = [ makeBall(paddle.x+paddle.w/2, paddle.y-ballRadius-2, 0, 0) ];
@@ -392,7 +409,7 @@ function launchBalls(){
   if(state !== STATE.AIM) return;
   ensureAudio();
   const b = balls[0];
-  const ang = -Math.PI/2 + (Math.random()*0.5 - 0.25);
+  const ang = -Math.PI/2 + (Math.random()*0.36 - 0.18);
   b.vx = Math.cos(ang)*baseSpeed;
   b.vy = Math.sin(ang)*baseSpeed;
   state = STATE.PLAY;
@@ -488,7 +505,7 @@ const levelEl = document.getElementById('levelVal');
 const comboEl = document.getElementById('combo');
 function updateHud(){
   scoreEl.textContent = String(score).padStart(6,'0');
-  livesEl.textContent = 'LIVES ' + '●'.repeat(Math.max(lives,0)) + '○'.repeat(Math.max(3-lives,0>lives?0:0));
+  livesEl.textContent = 'LIVES ' + '●'.repeat(Math.max(lives,0)) + '○'.repeat(Math.max(MAX_LIVES-lives,0));
   levelEl.textContent = 'LEVEL ' + level;
 }
 let comboPopTimer = 0;
@@ -629,11 +646,11 @@ function togglePause(forcePause){
 /* ======================= GAME FLOW ======================= */
 function startGame(){
   ensureAudio(); sfx.click();
-  score = 0; lives = 3; level = 1; combo = 0; comboTimer=0;
+  score = 0; lives = MAX_LIVES; level = 1; combo = 0; comboTimer=0;
   paddle.w = Math.max(90, W*PADDLE_BASE_W_RATIO);
   powerups = []; slowTimer=0; fireTimer=0; paddleWideTimer=0;
   initBallRadius();
-  baseSpeed = Math.max(260, W*0.34);
+  baseSpeed = Math.max(170, Math.min(W,H)*0.30);
   initPaddle();
   newLevelBricks();
   resetBallsOnPaddle();
@@ -653,7 +670,7 @@ function nextLevel(){
   ensureAudio(); sfx.levelup();
   setTimeout(()=>{
     level++;
-    baseSpeed *= 1.06;
+    baseSpeed *= 1.045;
     newLevelBricks();
     resetBallsOnPaddle();
     showOverlay(null);
@@ -709,7 +726,7 @@ function hitBrick(r,c,ball){
     score += 4;
   }
   updateHud();
-  ensureAudio(); sfx.brick(combo);
+  ensureAudio(); sfx.brick(combo); buzz(8);
 
   if(!ball.fire){
     // reflect based on overlap side
@@ -793,14 +810,18 @@ function update(dt){
     if(b.y - b.r < 0){ b.y = b.r; b.vy *= -1; sfx.wall(); }
 
     // paddle collision
-    if(b.vy>0 && circleRectHit(b.x,b.y,b.r, paddle.x,paddle.y,paddle.w,paddle.h)){
-      const hitPos = (b.x - (paddle.x+paddle.w/2)) / (paddle.w/2); // -1..1
+    // paddle collision — hit-box is a touch wider than the visual paddle,
+    // forgiving the imprecision of a fingertip on a small screen
+    const padForgive = paddle.w * 0.10;
+    if(b.vy>0 && circleRectHit(b.x,b.y,b.r, paddle.x-padForgive,paddle.y,paddle.w+padForgive*2,paddle.h)){
+      let hitPos = (b.x - (paddle.x+paddle.w/2)) / (paddle.w/2); // -1..1
+      hitPos = Math.max(-1, Math.min(1, hitPos));
       const speed = Math.hypot(b.vx,b.vy);
       const ang = -Math.PI/2 + hitPos*1.0;
       b.vx = Math.cos(ang)*speed;
       b.vy = Math.sin(ang)*speed;
       b.y = paddle.y - b.r - 0.5;
-      sfx.paddle();
+      sfx.paddle(); buzz(14);
     }
 
     checkBrickCollisions(b);
